@@ -36,6 +36,7 @@ function gpu_call(kernel::F, args::Vararg{Any,N};
                   elements::Union{Int,Nothing}=nothing,
                   threads::Union{Int,Nothing}=nothing,
                   blocks::Union{Int,Nothing}=nothing,
+                  lmem::Union{Int,Base.Callable}=0,
                   name::Union{String,Nothing}=nothing) where {F,N}
     # non-trivial default values for launch configuration
     if elements===nothing && threads===nothing && blocks===nothing
@@ -59,10 +60,10 @@ function gpu_call(kernel::F, args::Vararg{Any,N};
     if elements !== nothing
         @assert elements > 0
         heuristic = launch_heuristic(backend(target), kernel, args...;
-                                     elements, elements_per_thread)
+                                     elements, elements_per_thread, lmem)
         config = launch_configuration(backend(target), heuristic;
                                       elements, elements_per_thread)
-        gpu_call(backend(target), kernel, args, config.threads, config.blocks; name=name)
+        gpu_call(backend(target), kernel, args, config.threads, config.blocks, config.lmem; name=name)
     else
         @assert threads > 0
         @assert blocks > 0
@@ -78,15 +79,17 @@ end
 # this heuristic should be specialized for the back-end, ideally using an API for maximizing
 # the occupancy of the launch configuration (like CUDA's occupancy API).
 function launch_heuristic(backend::AbstractGPUBackend, kernel, args...;
-                          elements::Int, elements_per_thread::Int)
-    return (threads=256, blocks=32)
+                          elements::Int, elements_per_thread::Int,
+                          lmem::Union{Int, Base.Callable}=0)
+    return (threads=256, blocks=32, lmem=0)
 end
 
 # determine how many threads and blocks to actually launch given upper limits.
 # returns a tuple of blocks, threads, and elements_per_thread (which is always 1
 # unless specified that the kernel can handle a number of elements per thread)
 function launch_configuration(backend::AbstractGPUBackend, heuristic;
-                              elements::Int, elements_per_thread::Int)
+                              elements::Int, elements_per_thread::Int,
+                              lmem::Union{Int, Base.Callable}=0)
     threads = clamp(elements, 1, heuristic.threads)
     blocks = max(cld(elements, threads), 1)
 
@@ -100,11 +103,14 @@ function launch_configuration(backend::AbstractGPUBackend, heuristic;
             nelem = elements_per_thread
             blocks = cld(elements, nelem*threads)
         end
-        (; threads, blocks, elements_per_thread=nelem)
+        (; threads, blocks, elements_per_thread=nelem, lmem=lmem)
     else
-        (; threads, blocks, elements_per_thread=1)
+        (; threads, blocks, elements_per_thread=1, lmem=lmem)
     end
 end
 
-gpu_call(backend::AbstractGPUBackend, kernel, args, threads::Int, blocks::Int; kwargs...) =
+gpu_call(backend::AbstractGPUBackend, kernel, args, threads::Int, blocks::Int, lmem::Union{Int, Base.Callable}; kwargs...) =
     error("Not implemented") # COV_EXCL_LINE
+
+gpu_call(backend::AbstractGPUBackend, kernel, args, threads::Int, blocks::Int; kwargs...) =
+    gpu_call(backend, kernel, args, threads, blocks, 0; kwargs...)
