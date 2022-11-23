@@ -60,7 +60,8 @@ end
 Base.getindex(r::JlRefValue) = r.x
 Adapt.adapt_structure(to::Adaptor, r::Base.RefValue) = JlRefValue(adapt(to, r[]))
 
-function GPUArrays.gpu_call(::JLBackend, f, args, threads::Int, blocks::Int;
+function GPUArrays.gpu_call(::JLBackend, f, args, threads::Int, blocks::Int,
+                            lmem::Union{Int, Base.Callable};
                             name::Union{String,Nothing})
     ctx = JLKernelContext(threads, blocks)
     device_args = jlconvert.(args)
@@ -352,6 +353,10 @@ function GPUArrays.mapreducedim!(f, op, R::AnyJLArray, A::Union{AbstractArray,Br
         fill!(R, init)
     end
     @allowscalar Base.reducedim!(op, R.data, map(f, A))
+end
+
+function GPUArrays.LocalMemory(ctx, ::Type{T}, ::Val{dims}, ::Val{id}) where {T, dims, id}
+    return MArray(Tuple(dims), T)(undef)
 end
 
 end

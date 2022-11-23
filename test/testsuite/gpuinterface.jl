@@ -43,5 +43,6 @@
         x[1] = global_size(ctx)
         return
     end
+
     @test Array(x2) == [10]
 end

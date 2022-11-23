@@ -64,10 +64,12 @@ function gpu_call(kernel::F, args::Vararg{Any,N};
         config = launch_configuration(backend(target), heuristic;
                                       elements, elements_per_thread)
         gpu_call(backend(target), kernel, args, config.threads, config.blocks, config.lmem; name=name)
+        #gpu_call(backend(target), kernel, args, config.threads, config.blocks; name=name)
     else
         @assert threads > 0
         @assert blocks > 0
-        gpu_call(backend(target), kernel, args, threads, blocks; name=name)
+        gpu_call(backend(target), kernel, args, threads, blocks, lmem; name=name)
+        #gpu_call(backend(target), kernel, args, threads, blocks; name=name)
     end
 end
 
@@ -110,7 +112,8 @@ function launch_configuration(backend::AbstractGPUBackend, heuristic;
 end
 
 gpu_call(backend::AbstractGPUBackend, kernel, args, threads::Int, blocks::Int, lmem::Union{Int, Base.Callable}; kwargs...) =
-    error("Not implemented") # COV_EXCL_LINE
+    error("lmem call Not implemented") # COV_EXCL_LINE
 
 gpu_call(backend::AbstractGPUBackend, kernel, args, threads::Int, blocks::Int; kwargs...) =
+    #error("std call Not implemented") # COV_EXCL_LINE
     gpu_call(backend, kernel, args, threads, blocks, 0; kwargs...)
