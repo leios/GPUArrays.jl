@@ -19,7 +19,7 @@ function partial_scan(op::Function, output::AbstractArray{T}, input::AbstractArr
     thread = threadIdx().x
     block = blockIdx().x
 
-    temp = LocalMem(T, (2*threads,))
+    temp = LocalMemory(T, (2*threads,))
 
     # iterate the main dimension using threads and the first block dimension
     i = (blockIdx().x-1i32) * blockDim().x + threadIdx().x
@@ -132,7 +132,7 @@ end
 
 ## COV_EXCL_STOP
 
-function scan!(f::Function, output::AnyCuArray{T}, input::AnyCuArray;
+function scan!(f::Function, output::AnyGPUArray{T}, input::AnyGPUArray;
                dims::Integer, init=nothing, neutral=GPUArrays.neutral_element(f, T)) where {T}
     dims > 0 || throw(ArgumentError("dims must be a positive integer"))
     inds_t = axes(input)
@@ -148,13 +148,11 @@ function scan!(f::Function, output::AnyCuArray{T}, input::AnyCuArray;
     Rpost = CartesianIndices(size(input)[dims+1:end])
     Rother = CartesianIndices((length(Rpre), length(Rpost)))
 
-    gpu_call(kernel.fun; localmem = (threads)->2*threads*sizeof(T))
-
-    #=
+#=
     # determine how many threads we can launch for the scan kernel
     kernel = @cuda launch=false partial_scan(f, output, input, Rdim, Rpre, Rpost, Rother, neutral, init, Val(true))
-    kernel_config = launch_configuration(kernel.fun; shmem=(threads)->2*threads*sizeof(T))
-    =#
+    kernel_config = launch_configuration(kernel.fun; lmem=(threads)->2*threads*sizeof(T))
+=#
 
     # determine the grid layout to cover the other dimensions
     if length(Rother) > 1
@@ -169,15 +167,13 @@ function scan!(f::Function, output::AnyCuArray{T}, input::AnyCuArray;
     # does that suffice to scan the array in one go?
     full = nextpow(2, length(Rdim))
     if full <= kernel_config.threads
-        gpu_call(partial_scan, (f, output, input, Rdim, Rpre, Rpost, Rother, neutral, init, Val(true));
-                 threads=full, blocks=(1, blocks_other...), localmem = 2*full*sizeof(T), name="scan",
+        gpu_call(partial_scan, (f, output, input, Rdim, Rpre, Rpost, Rother, neutral, init, Val(true)); threads=full, blocks=(1, blocks_other...), lmem=2*full*sizeof(T), name="scan")
     else
         # perform partial scans across the scanning dimension
         # NOTE: don't set init here to avoid applying the value multiple times
         partial = prevpow(2, kernel_config.threads)
         blocks_dim = cld(length(Rdim), partial)
-        gpu_call(partial_scan, (f, output, input, Rdim, Rpre, Rpost, Rother, neutral, nothing, Val(true));
-                 threads=partial, blocks=(blocks_dim, blocks_other...), localmem = 2*partial*sizeof(T))
+        gpu_call(partial_scan, (f, output, input, Rdim, Rpre, Rpost, Rother, neutral, nothing, Val(true)); threads=partial, blocks=(blocks_dim, blocks_other...), lmem=2*partial*sizeof(T))
 
         # get the total of each thread block (except the first) of the partial scans
         aggregates = fill(neutral, Base.setindex(size(input), blocks_dim, dims))
@@ -190,8 +186,7 @@ function scan!(f::Function, output::AnyCuArray{T}, input::AnyCuArray;
         # NOTE: we assume that this kernel requires fewer resources than the scan kernel.
         #       if that does not hold, launch with fewer threads and calculate
         #       the aggregate block index within the kernel itself.
-        gpu_call(aggregate_partial_scan, (f, output, aggregates, Rdim, Rpre, Rpost , Rother, init);
-                 threads=partial, blocks=(blocks_dim, blocks_other...),
+        gpu_call(aggregate_partial_scan, (f, output, aggregates, Rdim, Rpre, Rpost, Rother, init); threads=partial, blocks=(blocks_dim, blocks_other...))
 
         unsafe_free!(aggregates)
     end
@@ -202,16 +197,16 @@ end
 
 ## Base interface
 
-Base._accumulate!(op, output::AnyCuArray, input::AnyCuVector, dims::Nothing, init::Nothing) =
+Base._accumulate!(op, output::AnyGPUArray, input::AbstractGPUVector, dims::Nothing, init::Nothing) =
     scan!(op, output, input; dims=1)
 
-Base._accumulate!(op, output::AnyCuArray, input::AnyCuArray, dims::Integer, init::Nothing) =
+Base._accumulate!(op, output::AnyGPUArray, input::AnyGPUArray, dims::Integer, init::Nothing) =
     scan!(op, output, input; dims=dims)
 
-Base._accumulate!(op, output::AnyCuArray, input::CuVector, dims::Nothing, init::Some) =
+Base._accumulate!(op, output::AnyGPUArray, input::AbstractGPUVector, dims::Nothing, init::Some) =
     scan!(op, output, input; dims=1, init=init)
 
-Base._accumulate!(op, output::AnyCuArray, input::AnyCuArray, dims::Integer, init::Some) =
+Base._accumulate!(op, output::AnyGPUArray, input::AnyGPUArray, dims::Integer, init::Some) =
     scan!(op, output, input; dims=dims, init=init)
 
-Base.accumulate_pairwise!(op, result::AnyCuVector, v::AnyCuVector) = accumulate!(op, result, v)
+Base.accumulate_pairwise!(op, result::AbstractGPUVector, v::AbstractGPUVector) = accumulate!(op, result, v)
